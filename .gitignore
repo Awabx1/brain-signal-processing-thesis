@@ -1,0 +1,5 @@
+venv/
+original/
+processed_old/
+processed/
+.DS_Store

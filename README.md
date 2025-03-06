@@ -1,1 +1,1 @@
-# brain-signal-processing-thesis
+# thesis-brain-signal-processing
