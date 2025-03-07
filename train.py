@@ -1,3 +1,8 @@
+#pip uninstall tensorflow
+#pip install tensorflow_macos==2.12.0
+#pip uninstall keras
+#pip install keras==2.12.0
+
 import os
 import numpy as np
 import pandas as pd
@@ -5,19 +10,18 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
-
 import tensorflow as tf
 from tensorflow.python.keras import backend as Ks
 from tensorflow.python.keras.models import Model
 
 from tensorflow.python.layers.normalization import BatchNormalization
 
-
 from tensorflow.python.keras.layers import (
     Input, Dense, Conv2D, Activation, AveragePooling2D, 
     SeparableConv2D, DepthwiseConv2D, Dropout, Flatten
 )
-from tensorflow.python.keras.optimizers import Adam
+# from tensorflow.python.keras.optimizers import Adam
+from keras.optimizers import Adam
 
 def EEGNet(nb_classes, Chans = 5, Samples = 128,
            dropoutRate = 0.5, kernLength = 64, F1 = 8, D = 2, F2 = 16):
