@@ -1,205 +1,161 @@
 import os
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 
+from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 
-# ─────────────────────────────────────────────────────────────────────
-# A) Multi-Class EEGNet Definition
-#   Adjust kernel sizes/padding if your data shape differs.
-# ─────────────────────────────────────────────────────────────────────
-class EEGNet(nn.Module):
+import tensorflow as tf
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Input, Dense, Conv2D, BatchNormalization, Activation, AveragePooling2D, 
+    SeparableConv2D, DepthwiseConv2D, Dropout, Flatten
+)
+from tensorflow.keras.optimizers import Adam
+
+def EEGNet(nb_classes, Chans = 5, Samples = 128,
+           dropoutRate = 0.5, kernLength = 64, F1 = 8, D = 2, F2 = 16):
     """
-    Multi-class EEGNet adapted for a shape of (N, 1, 120, 64).
-    If your data has a different shape (e.g. 5 channels, 128 samples),
-    you must adjust the conv/pool sizes and final in_features.
+    A simplified EEGNet implementation for demonstration.
+    nb_classes: number of classes (e.g., 4 for {d, u, r, l})
+    Chans: number of electrodes/channels
+    Samples: number of time points in each trial
+    dropoutRate: dropout rate
+    kernLength: length of temporal convolution kernel
+    F1, D, F2: filter dimensions in the original EEGNet design
     """
-    def __init__(self, n_classes=5):
-        super(EEGNet, self).__init__()
+    # Input shape: (batch, 1, Chans, Samples) – you can also use (batch, Chans, Samples, 1)
+    input_shape = (1, Chans, Samples)
 
-        # Layer 1
-        self.conv1 = nn.Conv2d(in_channels=1,
-                               out_channels=16,
-                               kernel_size=(1, 64),
-                               padding=0)
-        self.batchnorm1 = nn.BatchNorm2d(16, affine=False)
+    inputs = Input(shape=input_shape)
+    
+    # Block1: Temporal Convolution
+    # --------------------------------
+    x = Conv2D(F1, (1, kernLength), padding='same', 
+               input_shape=input_shape, use_bias=False)(inputs)
+    x = BatchNormalization()(x)
+    x = DepthwiseConv2D((Chans, 1), use_bias=False, 
+                        depth_multiplier=D, depthwise_constraint=None,
+                        padding='valid')(x)
+    x = BatchNormalization()(x)
+    x = Activation('elu')(x)
+    x = AveragePooling2D((1, 4))(x)  
+    x = Dropout(dropoutRate)(x)
 
-        # Layer 2
-        self.padding1 = nn.ZeroPad2d((16, 17, 0, 1))  # (left, right, top, bottom)
-        self.conv2 = nn.Conv2d(in_channels=1,
-                               out_channels=4,
-                               kernel_size=(2, 32))
-        self.batchnorm2 = nn.BatchNorm2d(4, affine=False)
-        self.pooling2 = nn.MaxPool2d(kernel_size=2, stride=4)
+    # Block2: Separable Convolution
+    # --------------------------------
+    x = SeparableConv2D(F2, (1, 16), use_bias=False, padding='same')(x)
+    x = BatchNormalization()(x)
+    x = Activation('elu')(x)
+    x = AveragePooling2D((1, 8))(x)
+    x = Dropout(dropoutRate)(x)
 
-        # Layer 3
-        self.padding2 = nn.ZeroPad2d((2, 1, 4, 3))
-        self.conv3 = nn.Conv2d(in_channels=4,
-                               out_channels=4,
-                               kernel_size=(8, 4))
-        self.batchnorm3 = nn.BatchNorm2d(4, affine=False)
-        self.pooling3 = nn.MaxPool2d(kernel_size=(2, 4))
+    # Classification
+    # --------------------------------
+    x = Flatten()(x)
+    outputs = Dense(nb_classes, activation='softmax')(x)
 
-        # Fully Connected
-        # NOTE: The final flatten dimension (4*2*7=56) depends on the input (1x120x64).
-        # Adjust if your data or pooling changes.
-        self.fc1 = nn.Linear(in_features=4 * 2 * 7, out_features=n_classes)
+    return Model(inputs=inputs, outputs=outputs)
 
-    def forward(self, x):
-        # x shape: (batch, 1, 120, 64)
+# -----------------------------------------
+# 2) Load and Preprocess Your CSV Data
+# -----------------------------------------
+def load_all_data(root_folder, label_list=['d', 'u', 'r', 'l'], 
+                  time_points=128):
+    """
+    Example function to scan your participant folders, load your CSVs, 
+    and build arrays of shape:
+        X -> (num_trials, 1, num_channels, num_timepoints)
+        y -> (num_trials,)
+    NOTE: You must adapt to how your data is actually stored!
+    """
+    all_X = []
+    all_y = []
 
-        # Layer 1
-        x = F.elu(self.conv1(x))       # (batch,16,120,1)
-        x = self.batchnorm1(x)
-        x = F.dropout(x, 0.25)
-        x = x.permute(0, 3, 1, 2)      # (batch,1,16,120)
+    # For simplicity, assume you have a known set of files or a known structure:
+    # We look for each subject folder, gather CSV for each trial, and extract 
+    # the signal from columns [EEG.AF3, EEG.T7, EEG.Pz, EEG.T8, EEG.AF4],
+    # or any subset of columns you want.
+    channels_of_interest = ['EEG.AF3', 'EEG.T7', 'EEG.Pz', 'EEG.T8', 'EEG.AF4']
 
-        # Layer 2
-        x = self.padding1(x)          # shape => (batch,1,17,153)
-        x = F.elu(self.conv2(x))      # => (batch,4,16,122) approx
-        x = self.batchnorm2(x)
-        x = F.dropout(x, 0.25)
-        x = self.pooling2(x)          # => (batch,4,8,30) approx
+    for subdir, dirs, files in os.walk(root_folder):
+        for file in files:
+            if file.endswith('_processed.csv'):
+                filepath = os.path.join(subdir, file)
+                df = pd.read_csv(filepath)
 
-        # Layer 3
-        x = self.padding2(x)          # => (batch,4,13,35) approx
-        x = F.elu(self.conv3(x))      # => (batch,4,6,32) approx
-        x = self.batchnorm3(x)
-        x = F.dropout(x, 0.25)
-        x = self.pooling3(x)          # => (batch,4,2,7)
+                # Get the label from the filename or from the 'Label' column
+                # For instance, if the file is named "d1_..._processed.csv", 
+                # the label might be 'd'.
+                # Alternatively, you can use the 'Label' column in the CSV.
+                label = df['Label'].iloc[0]  # if consistent
 
-        # Flatten
-        x = x.view(-1, 4 * 2 * 7)      # => (batch,56)
-        # Multi-class => raw logits
-        x = self.fc1(x)               # => (batch,n_classes)
-        return x
+                if label not in label_list:
+                    continue
 
-# ─────────────────────────────────────────────────────────────────────
-# B) Simple Accuracy Evaluation for Multi-Class
-#   (Could add precision/recall if needed.)
-# ─────────────────────────────────────────────────────────────────────
-def evaluate(model, X, y, device):
-    model.eval()
-    with torch.no_grad():
-        inputs = torch.from_numpy(X).to(device).float()
-        logits = model(inputs)              # shape (N, n_classes)
-        preds = torch.argmax(logits, dim=1) # shape (N,)
-    preds_np = preds.cpu().numpy()
-    return accuracy_score(y, preds_np)
+                # Extract your channel signals for a certain time window or 
+                # entire trial. 
+                # E.g., for one "trial," suppose we take the first "time_points" rows:
+                # You must ensure each trial truly has enough samples.
+                signal = df[channels_of_interest].values[:time_points, :].T  # shape (5, time_points)
+                
+                # If shape is smaller than time_points, skip or pad
+                if signal.shape[1] < time_points:
+                    continue  # or pad it if you prefer
 
-# ─────────────────────────────────────────────────────────────────────
-# C) Data Loading
-#   Example loading each CSV from a “processed/” folder:
-#   - The first letter determines the label: d=0,i=1,r=2,u=3,l=4
-#   - We assume each CSV is shaped (120,64) or you must adapt.
-# ─────────────────────────────────────────────────────────────────────
-def load_csv_data(processed_root="processed"):
-    label_map = {'d': 0, 'i': 1, 'r': 2, 'u': 3, 'l': 4}
-    X_list, y_list = [], []
+                # Expand to (1, 5, time_points)
+                signal = np.expand_dims(signal, axis=0)
 
-    # Walk through every subdirectory and file under “processed_root”
-    for root, dirs, files in os.walk(processed_root):
-        for fname in files:
-            if not fname.endswith(".csv"):
-                continue
+                all_X.append(signal)
+                all_y.append(label)
+    
+    all_X = np.array(all_X)  # shape -> (NumTrials, 1, 5, time_points)
+    all_y = np.array(all_y)
 
-            class_code = fname[0].lower()
-            if class_code not in label_map:
-                continue
-            label = label_map[class_code]
+    return all_X, all_y
 
-            csv_path = os.path.join(root, fname)
-            df = pd.read_csv(csv_path)
-
-            # Expect shape (120, 64)? Adjust to your real shape
-            if df.shape != (120, 64):
-                print(f"[WARNING] {csv_path} has shape {df.shape}, skipping.")
-                continue
-
-            arr = df.values.astype("float32")  
-            arr = np.expand_dims(arr, axis=0)  # => (1, 120, 64)
-            X_list.append(arr)
-            y_list.append(label)
-
-    if len(X_list) == 0:
-        raise RuntimeError("No valid CSV files found in subfolders.")
-
-    X = np.stack(X_list, axis=0)  
-    y = np.array(y_list, dtype=np.int64)
-
-    return X, y
-
-
-# ─────────────────────────────────────────────────────────────────────
-# D) Main Training Script
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------
+# 3) Train EEGNet
+# --------------------------------------
 def main():
-    # 1) Choose device (MPS on Apple Silicon or CPU fallback)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print("Using device:", device)
+    root_folder = '/path/to/your/cleaned_csvs'
+    X, y = load_all_data(root_folder)
 
-    # 2) Load data from CSV
-    X, y = load_csv_data(processed_root="processed")
-    print("Data loaded:")
-    print("X shape =", X.shape, "y shape =", y.shape)  # (N, 1, 120,64), (N,)
+    # Encode labels from 'd,u,r,l' -> 0,1,2,3
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
 
-    # 3) Split into train/val/test (you can change ratios or do cross-val)
-    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_tmp, y_tmp, test_size=0.5, random_state=42, stratify=y_tmp)
+    # Train/Val split
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y_encoded, stratify=y_encoded, test_size=0.2, random_state=42
+    )
 
-    print("Train size =", len(X_train), "Val size =", len(X_val), "Test size =", len(X_test))
+    # Instantiate EEGNet. Adjust hyperparameters to your data dimension
+    nb_classes = len(np.unique(y_encoded))
+    chans = X.shape[2]      # 5
+    samples = X.shape[3]    # e.g. 128
 
-    # 4) Instantiate the multi-class EEGNet
-    net = EEGNet(n_classes=5).to(device)
+    model = EEGNet(nb_classes=nb_classes, Chans=chans, Samples=samples, 
+                   dropoutRate=0.5, kernLength=64, F1=8, D=2, F2=16)
 
-    # 5) Loss & Optimizer
-    criterion = nn.CrossEntropyLoss()  # multi-class
-    optimizer = optim.Adam(net.parameters(), lr=1e-3)
+    model.compile(loss='sparse_categorical_crossentropy',
+                  optimizer=Adam(learning_rate=0.001),
+                  metrics=['accuracy'])
+    
+    # Train
+    history = model.fit(
+        X_train, y_train,
+        batch_size=16,
+        epochs=30,
+        validation_data=(X_val, y_val),
+        verbose=1
+    )
 
-    # 6) Training Loop
-    num_epochs = 10
-    batch_size = 16
+    # Evaluate
+    scores = model.evaluate(X_val, y_val, verbose=0)
+    print("Validation Loss: %.4f" % scores[0])
+    print("Validation Accuracy: %.4f" % scores[1])
 
-    for epoch in range(num_epochs):
-        net.train()
-        # Shuffle training data
-        perm = np.random.permutation(len(X_train))
-        X_train, y_train = X_train[perm], y_train[perm]
-
-        running_loss = 0.0
-        num_batches = len(X_train) // batch_size
-
-        for i in range(num_batches):
-            start = i * batch_size
-            end   = start + batch_size
-
-            inputs = torch.from_numpy(X_train[start:end]).to(device).float()
-            labels = torch.from_numpy(y_train[start:end]).to(device).long()
-
-            optimizer.zero_grad()
-            outputs = net(inputs)            # shape (batch, 5)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-
-        # Evaluate at end of epoch
-        train_acc = evaluate(net, X_train, y_train, device)
-        val_acc   = evaluate(net, X_val,   y_val,   device)
-        test_acc  = evaluate(net, X_test,  y_test,  device)
-
-        print(f"\nEpoch {epoch+1}/{num_epochs}")
-        print(f"Loss: {running_loss:.4f}")
-        print(f"Train Accuracy: {train_acc:.4f}")
-        print(f"Val Accuracy:   {val_acc:.4f}")
-        print(f"Test Accuracy:  {test_acc:.4f}")
-
-    print("\nTraining complete.")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
