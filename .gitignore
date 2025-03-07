@@ -3,3 +3,5 @@ original/
 processed_old/
 processed/
 .DS_Store
+venv2/
+venv2

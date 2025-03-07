@@ -5,21 +5,26 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
+
 import tensorflow as tf
-from tensorflow.keras import backend as K
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import (
-    Input, Dense, Conv2D, BatchNormalization, Activation, AveragePooling2D, 
+from tensorflow.python.keras import backend as Ks
+from tensorflow.python.keras.models import Model
+
+from tensorflow.python.layers.normalization import BatchNormalization
+
+
+from tensorflow.python.keras.layers import (
+    Input, Dense, Conv2D, Activation, AveragePooling2D, 
     SeparableConv2D, DepthwiseConv2D, Dropout, Flatten
 )
-from tensorflow.keras.optimizers import Adam
+from tensorflow.python.keras.optimizers import Adam
 
 def EEGNet(nb_classes, Chans = 5, Samples = 128,
            dropoutRate = 0.5, kernLength = 64, F1 = 8, D = 2, F2 = 16):
     """
     A simplified EEGNet implementation for demonstration.
     nb_classes: number of classes (e.g., 4 for {d, u, r, l})
-    Chans: number of electrodes/channels
+    Chans: number of electrodes/channels`
     Samples: number of time points in each trial
     dropoutRate: dropout rate
     kernLength: length of temporal convolution kernel
@@ -43,7 +48,7 @@ def EEGNet(nb_classes, Chans = 5, Samples = 128,
     x = AveragePooling2D((1, 4))(x)  
     x = Dropout(dropoutRate)(x)
 
-    # Block2: Separable Convolution
+    # Block2: Separable Convolution``
     # --------------------------------
     x = SeparableConv2D(F2, (1, 16), use_bias=False, padding='same')(x)
     x = BatchNormalization()(x)
@@ -80,6 +85,7 @@ def load_all_data(root_folder, label_list=['d', 'u', 'r', 'l'],
     channels_of_interest = ['EEG.AF3', 'EEG.T7', 'EEG.Pz', 'EEG.T8', 'EEG.AF4']
 
     for subdir, dirs, files in os.walk(root_folder):
+        print(f'loadig {len(files)}')
         for file in files:
             if file.endswith('_processed.csv'):
                 filepath = os.path.join(subdir, file)
@@ -112,14 +118,14 @@ def load_all_data(root_folder, label_list=['d', 'u', 'r', 'l'],
     
     all_X = np.array(all_X)  # shape -> (NumTrials, 1, 5, time_points)
     all_y = np.array(all_y)
-
+    print('data loaded')
     return all_X, all_y
 
 # --------------------------------------
 # 3) Train EEGNet
 # --------------------------------------
 def main():
-    root_folder = '/path/to/your/cleaned_csvs'
+    root_folder = '/processed'
     X, y = load_all_data(root_folder)
 
     # Encode labels from 'd,u,r,l' -> 0,1,2,3
