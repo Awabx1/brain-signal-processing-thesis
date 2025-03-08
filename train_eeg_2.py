@@ -197,3 +197,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+#     Validation Loss: 1.3736
+# Validation Accuracy: 0.4074
+    
