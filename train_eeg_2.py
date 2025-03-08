@@ -189,7 +189,7 @@ def main():
         verbose=1
     )
 
-    # 6) Evaluate
+    # 6) Evaluate   
     val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
     print(f"Validation Loss: {val_loss:.4f}")
     print(f"Validation Accuracy: {val_acc:.4f}")
