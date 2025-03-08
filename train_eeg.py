@@ -141,7 +141,7 @@ def main():
     # Train Model
     history = model.fit(
         X_train, y_train,
-        batch_size=16,
+        batch_size=8,
         epochs=100,
         validation_data=(X_val, y_val),
         verbose=1
