@@ -7,20 +7,13 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
-from tensorflow.python.keras.models import Model
-from tensorflow.python.keras.layers import (
-    Input,
-    Dense,
-    Conv2D,
-    Activation,
-    AveragePooling2D,
-    SeparableConv2D,
-    DepthwiseConv2D,
-    Dropout,
-    Flatten
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Input, Dense, Conv2D, Activation, AveragePooling2D,
+    SeparableConv2D, DepthwiseConv2D, Dropout, Flatten, BatchNormalization
 )
-from tensorflow.python.layers.normalization import BatchNormalization
-from tensorflow.python.keras.optimizer_v2.adam import Adam
+from tensorflow.keras.optimizers import Adam
+
 
 
 # ---------------------------------------------------------
