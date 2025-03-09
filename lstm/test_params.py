@@ -1,4 +1,3 @@
-
 import os
 import numpy as np
 import pandas as pd
@@ -6,19 +5,22 @@ import random
 import itertools
 
 import tensorflow as tf
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, models, callbacks
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-
-def load_eeg_data_for_lstm(root_folder="processed", label_list=['d', 'u', 'r', 'l'], 
-                           time_points=128):
+def load_eeg_data_for_lstm(
+    root_folder="processed", 
+    label_list=['d', 'u', 'r', 'l'], 
+    time_points=128,
+    per_participant_norm=True
+):
     """
-    Loads raw EEG channels [AF3, T7, Pz, T8, AF4] at fixed time_points for LSTM.
-    Returns shape (samples, time_points, channels) for X, plus label array y.
+    Similar to CNN approach, but storing data for LSTM.
+    Appends (signal, label, participant). Then optionally does per-participant norm.
     """
     channels_of_interest = ['EEG.AF3', 'EEG.T7', 'EEG.Pz', 'EEG.T8', 'EEG.AF4']
-    all_X, all_y = [], []
+    data_list = []
 
     for subdir, _, files in os.walk(root_folder):
         for file in files:
@@ -29,29 +31,69 @@ def load_eeg_data_for_lstm(root_folder="processed", label_list=['d', 'u', 'r', '
                     continue
 
                 df = pd.read_csv(filepath)
+                df["Label"] = label  # assign label first
+
+                participant = (
+                    df["Participant"].iloc[0] 
+                    if "Participant" in df.columns else "P0"
+                )
                 if not all(col in df.columns for col in channels_of_interest):
                     continue
+
                 signal = df[channels_of_interest].values
                 if signal.shape[0] < time_points:
                     continue
 
                 signal = signal[:time_points, :]
-                all_X.append(signal)
-                all_y.append(label)
+                data_list.append((signal, label, participant))
 
-    X = np.array(all_X)
-    y = np.array(all_y)
+    if not data_list:
+        print("No data found for LSTM.")
+        return np.array([]), np.array([])
+
+    if per_participant_norm:
+        from collections import defaultdict
+        part_map = defaultdict(list)
+        for (sig, lab, part) in data_list:
+            part_map[part].append(sig)
+
+        # Compute per-participant mean/std
+        for part, signals in part_map.items():
+            concatenated = np.concatenate(signals, axis=0)
+            mean_ = concatenated.mean(axis=0)
+            std_ = concatenated.std(axis=0, ddof=1) + 1e-10
+            part_map[part] = (mean_, std_)
+
+        X_list, y_list = [], []
+        for (sig, lab, part) in data_list:
+            mean_, std_ = part_map[part]
+            sig_norm = (sig - mean_) / std_
+            X_list.append(sig_norm)
+            y_list.append(lab)
+
+        X = np.array(X_list)
+        y = np.array(y_list)
+    else:
+        X = np.array([item[0] for item in data_list])
+        y = np.array([item[1] for item in data_list])
+
     print(f"Loaded LSTM data: {X.shape}, labels: {y.shape}")
     return X, y
 
 
-def build_lstm_model(input_shape, num_classes, lstm_units=64, dropout=0.5, 
-                     dense_units=32, learning_rate=1e-3):
+def build_small_lstm_model(
+    input_shape,
+    num_classes,
+    lstm_units=32,
+    dense_units=16,
+    dropout=0.3,
+    learning_rate=1e-3
+):
     """
-    Build a simple LSTM model with parameterized hyperparameters.
+    A smaller LSTM architecture to reduce overfitting.
     """
     model = models.Sequential()
-    model.add(layers.LSTM(lstm_units, return_sequences=False, input_shape=input_shape))
+    model.add(layers.LSTM(lstm_units, input_shape=input_shape, return_sequences=False))
     model.add(layers.Dropout(dropout))
     model.add(layers.Dense(dense_units, activation='relu'))
     model.add(layers.Dropout(dropout))
@@ -65,7 +107,7 @@ def build_lstm_model(input_shape, num_classes, lstm_units=64, dropout=0.5,
     return model
 
 
-def lstm_parameter_search(X, y, param_grid, epochs=20, batch_size=8, seed=42):
+def lstm_parameter_search(X, y, param_grid, epochs=30, batch_size=8, seed=42):
     le = LabelEncoder()
     y_encoded = le.fit_transform(y)
     num_classes = len(np.unique(y_encoded))
@@ -84,21 +126,27 @@ def lstm_parameter_search(X, y, param_grid, epochs=20, batch_size=8, seed=42):
         params = dict(zip(param_grid.keys(), combo))
         print(f"Trying params: {params}")
 
-        input_shape = (X.shape[1], X.shape[2])
-        model = build_lstm_model(
-            input_shape=input_shape,
+        model = build_small_lstm_model(
+            input_shape=(X.shape[1], X.shape[2]),
             num_classes=num_classes,
             lstm_units=params['lstm_units'],
-            dropout=params['dropout'],
             dense_units=params['dense_units'],
+            dropout=params['dropout'],
             learning_rate=params['learning_rate']
         )
 
-        history = model.fit(
+        es = callbacks.EarlyStopping(
+            monitor='val_accuracy',
+            patience=5,
+            restore_best_weights=True
+        )
+
+        model.fit(
             X_train, y_train,
             epochs=epochs,
             batch_size=batch_size,
             validation_split=0.2,
+            callbacks=[es],
             verbose=0
         )
 
@@ -118,26 +166,25 @@ def main():
     np.random.seed(SEED)
     tf.random.set_seed(SEED)
 
-    X, y = load_eeg_data_for_lstm("processed", time_points=128)
+    X, y = load_eeg_data_for_lstm(
+        root_folder="processed", 
+        time_points=128,
+        per_participant_norm=True
+    )
     if len(X) == 0:
         print("No data for LSTM. Exiting.")
         return
 
     param_grid = {
-        'lstm_units': [32, 64],
-        'dropout': [0.3, 0.5],
-        'dense_units': [32, 64],
-        'learning_rate': [1e-3, 1e-4],
+        'lstm_units': [16, 32],
+        'dense_units': [16, 32],
+        'dropout': [0.2, 0.3],
+        'learning_rate': [1e-3, 1e-4]
     }
 
     best_params, best_acc = lstm_parameter_search(
-        X, y,
-        param_grid=param_grid,
-        epochs=15,   # or fewer if time is a concern
-        batch_size=8,
-        seed=SEED
+        X, y, param_grid, epochs=25, batch_size=8, seed=SEED
     )
-
     print("\nBest LSTM Params:", best_params)
     print(f"Best Test Accuracy: {best_acc:.4f}")
 

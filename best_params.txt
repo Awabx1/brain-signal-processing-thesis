@@ -1,15 +1,17 @@
+rf
+Best RandomForest Params: {'n_estimators': 200, 'max_depth': None, 'min_samples_split': 2, 'max_features': 'log2'}, Best Accuracy: 0.4789
+Feature importances shape: (43,)
+Top 10 feature indices: [28  1 21 15 19  4 11 12 18  5]
+Top 10 importances: [0.14698001 0.13797069 0.12595126 0.11895281 0.06362684 0.04906767
+ 0.04899405 0.04059703 0.03987312 0.01774291]
+
 cnn
-Best Parameter Combination:
-{'conv1_filters': 8, 'conv2_filters': 16, 'dropout1': 0.25, 'dropout2': 0.25, 'dense_units': 32, 'learning_rate': 0.001}
-Best Test Accuracy: 0.2593
+Best CNN Params: {'conv_filters': 4, 'dense_units': 16, 'dropout_rate': 0.3, 'learning_rate': 0.0001}
+Best Test Accuracy: 0.2963
 
 knn
-Best KNN Params: {'n_neighbors': 3, 'weights': 'distance', 'p': 1}, Best Accuracy: 0.2928
-
-
-rf
-Best RandomForest Params: {'n_estimators': 200, 'max_depth': None, 'min_samples_split': 2, 'max_features': 'log2'}, Best Accuracy: 0.2960
+Best KNN Params: {'n_neighbors': 3, 'weights': 'distance', 'metric': 'manhattan'}, Best Accuracy: 0.2894
 
 lstm
-Best LSTM Params: {'lstm_units': 64, 'dropout': 0.3, 'dense_units': 64, 'learning_rate': 0.0001}
-Best Test Accuracy: 0.2963
+Best LSTM Params: {'lstm_units': 16, 'dense_units': 16, 'dropout': 0.3, 'learning_rate': 0.0001}
+Best Test Accuracy: 0.4074
