@@ -1,191 +1,195 @@
 import os
+import random
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
+
 import tensorflow as tf
-from tensorflow.keras.optimizers import Adam  # Use legacy only if needed
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (
-    Input, Dense, Conv2D, Activation, AveragePooling2D, 
+    Input, Dense, Conv2D, Activation, AveragePooling2D,
     SeparableConv2D, DepthwiseConv2D, Dropout, Flatten, BatchNormalization
 )
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.regularizers import l2
-from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.keras.optimizers.schedules import CosineDecay
+from tensorflow.keras.optimizers import Adam
 
 
-early_stopping = EarlyStopping(monitor='val_loss', patience=25, restore_best_weights=True, verbose=1)
-lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-    initial_learning_rate=0.001, decay_steps=100, alpha=0.0001
-)
 
-def EEGNet(nb_classes, Chans=5, Samples=128, dropoutRate=0.3):
+# ---------------------------------------------------------
+# 1) EEGNet Model (channels-last)
+# ---------------------------------------------------------
+def EEGNet(nb_classes,
+           Chans=5,
+           Samples=128,
+           dropoutRate=0.3,
+           kernLength=32,
+           F1=16,
+           D=2,
+           F2=32):
+    """
+    EEGNet in 'channels_last' format, with updated hyperparameters:
+      - dropoutRate=0.3
+      - kernLength=32
+      - F1=16
+      - D=2
+      - F2=32
+    """
     input_shape = (Chans, Samples, 1)
     inputs = Input(shape=input_shape)
 
-    # Block 1: Temporal Convolution
-    x = Conv2D(24, (32, 1), padding='same', use_bias=False)(inputs)  
+    # Block1: Temporal Convolution
+    x = Conv2D(
+        filters=F1,
+        kernel_size=(1, kernLength),
+        padding='same',
+        data_format='channels_last',
+        use_bias=False
+    )(inputs)
     x = BatchNormalization()(x)
-    x = Activation('relu')(x)
 
-    # Depthwise Convolution
-    x = DepthwiseConv2D((4, 1), use_bias=False, depth_multiplier=2, padding='valid')(x)
+    x = DepthwiseConv2D(
+        kernel_size=(Chans, 1),
+        use_bias=False,
+        depth_multiplier=D,
+        data_format='channels_last',
+        padding='valid'
+    )(x)
     x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+    x = Activation('elu')(x)
 
-    # Pooling & Dropout
-    pool_size_1 = min(2, x.shape[1])
-    x = AveragePooling2D((pool_size_1, 1))(x)
+    x = AveragePooling2D((1, 4), data_format='channels_last')(x)
     x = Dropout(dropoutRate)(x)
 
-    # Separable Convolution
-    x = SeparableConv2D(32, (8, 1), use_bias=False, padding='same')(x)
+    # Block2: Separable Convolution
+    x = SeparableConv2D(
+        filters=F2,
+        kernel_size=(1, 16),
+        use_bias=False,
+        padding='same',
+        data_format='channels_last'
+    )(x)
     x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+    x = Activation('elu')(x)
 
-    pool_size_2 = min(2, x.shape[1])
-    x = AveragePooling2D((pool_size_2, 1))(x)
+    x = AveragePooling2D((1, 8), data_format='channels_last')(x)
     x = Dropout(dropoutRate)(x)
 
-    # Fully Connected Layer with Higher Regularization
+    # Classification
     x = Flatten()(x)
-    x = Dense(64, activation='relu', kernel_regularizer=l2(0.005))(x)  
-    x = Dropout(dropoutRate)(x)
-
     outputs = Dense(nb_classes, activation='softmax')(x)
 
     return Model(inputs=inputs, outputs=outputs)
 
 
-def add_noise(X, noise_level=0.1):
-    """
-    Add Gaussian noise to EEG data to improve generalization.
-    """
-    noise = np.random.normal(0, noise_level, X.shape)
-    return X + noise
-
-def augment_data(X):
-    X_shifted = np.roll(X, shift=5, axis=2)  # Time shift
-    X_flipped = np.flip(X, axis=1)  # Flip channels
-    return np.concatenate([X, X_shifted, X_flipped], axis=0)
-
-
-
+# ---------------------------------------------------------
+# 2) Load CSV Data
+# ---------------------------------------------------------
 def load_all_data(root_folder, label_list=['d', 'u', 'r', 'l'], time_points=128):
-    all_X, all_y = [], []
+    """
+    Loads CSV data from files ending with '_processed.csv'.
+    - label = first char of filename (d/u/r/l)
+    - instance = second char of filename (digit)
+    - channels_of_interest = [AF3, T7, Pz, T8, AF4]
+    """
+    all_X = []
+    all_y = []
     channels_of_interest = ['EEG.AF3', 'EEG.T7', 'EEG.Pz', 'EEG.T8', 'EEG.AF4']
 
     for subdir, _, files in os.walk(root_folder):
         for file in files:
-            if not file.endswith('_processed.csv'):
-                continue
+            if file.endswith('_processed.csv'):
+                filepath = os.path.join(subdir, file)
+                label = file[0]     
+                instance = file[1]  
+                if label not in label_list or not instance.isdigit():
+                    continue
 
-            filepath = os.path.join(subdir, file)
-            label = file[0]  
-            
-            if label not in label_list:
-                continue
-            
-            try:
                 df = pd.read_csv(filepath)
-            except Exception:
-                continue
-            
-            if not all(col in df.columns for col in channels_of_interest):
-                continue
+                signal = df[channels_of_interest].values.T
 
-            signal = df[channels_of_interest].values[:time_points, :].T  
-            if signal.shape[1] < time_points:
-                continue
+                # Skip if not enough points
+                if signal.shape[1] < time_points:
+                    print(f"File {file} only has {signal.shape[1]} samples, needs {time_points}")
+                    continue
 
-            all_X.append(signal)
-            all_y.append(label)
+                # Trim or slice to 128
+                signal = signal[:, :time_points]  
+                signal = np.expand_dims(signal, axis=-1)
+
+                all_X.append(signal)
+                all_y.append(label)
 
     all_X = np.array(all_X)
     all_y = np.array(all_y)
-
+    print(f"Total files loaded: {len(all_X)}")
     return all_X, all_y
 
-def preprocess_data(X_train, X_val):
-    scaler = StandardScaler()
-    X_train_flat = X_train.reshape(X_train.shape[0], -1)  # Flatten to apply scaler
-    X_val_flat = X_val.reshape(X_val.shape[0], -1)
 
-    X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
-    X_val_scaled = scaler.transform(X_val_flat).reshape(X_val.shape)
-
-    return X_train_scaled, X_val_scaled
-
-
+# ---------------------------------------------------------
+# 3) Train EEGNet with Best Hyperparams
+# ---------------------------------------------------------
 def main():
+    # 1) Set global random seeds to reproduce results
+    SEED = 42
+    random.seed(SEED)
+    np.random.seed(SEED)
+    tf.random.set_seed(SEED)
+
+    # 2) Load Data
     root_folder = 'processed'
     X, y = load_all_data(root_folder)
-    
+
+    # Encode labels
     le = LabelEncoder()
     y_encoded = le.fit_transform(y)
 
-    print("\n**Class Distribution**")
-    print(np.unique(y_encoded, return_counts=True))  # Debugging label encoding
-
-    # Split dataset
+    # Train/val split
     X_train, X_val, y_train, y_val = train_test_split(
         X, y_encoded, stratify=y_encoded, test_size=0.2, random_state=42
     )
 
-    # Normalize data (AFTER splitting)
-    scaler = StandardScaler()
-    X_train_flat = X_train.reshape(X_train.shape[0], -1)
-    X_val_flat = X_val.reshape(X_val.shape[0], -1)
-
-    X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
-    X_val_scaled = scaler.transform(X_val_flat).reshape(X_val.shape)
-
-    # Apply noise augmentation only to training data
-    X_train_scaled = add_noise(X_train_scaled, noise_level=0.1)
-
+    # 3) Instantiate the model with best parameters
     nb_classes = len(np.unique(y_encoded))
-    chans, samples = X.shape[1], X.shape[2]
+    chans = X.shape[1]    # 5
+    samples = X.shape[2]  # 128
 
-    model = EEGNet(nb_classes=nb_classes, Chans=chans, Samples=samples)
+    model = EEGNet(
+        nb_classes=nb_classes,
+        Chans=chans,
+        Samples=samples,
+        dropoutRate=0.3,    # best found 
+        kernLength=32,
+        F1=16,
+        D=2,
+        F2=32
+    )
 
-    # Define CosineDecay Learning Rate Scheduler
-    lr_schedule = CosineDecay(
-    initial_learning_rate=0.001, decay_steps=100, alpha=0.0001
-)
-
-    # Use inside Adam optimizer
-    optimizer = Adam(learning_rate=lr_schedule)
-
-    # Compile the model
+    # 4) Compile with Adam(learning_rate=0.001)
     model.compile(
         loss='sparse_categorical_crossentropy',
-        optimizer=optimizer,
+        optimizer=Adam(learning_rate=0.001),
         metrics=['accuracy']
     )
 
-    # Train model
-    class_weights = compute_class_weight(class_weight="balanced", classes=np.unique(y_train), y=y_train)
-    class_weights_dict = {i: w for i, w in enumerate(class_weights)}
-
-    X_train = augment_data(X_train)
-    y_train = np.tile(y_train, 3)
-
+    # 5) Train for 50 epochs, batch_size=4
     history = model.fit(
-        X_train, y_train,
-        batch_size=32,
-        epochs=200,
+        X_train,
+        y_train,
+        batch_size=4,
+        epochs=50,
         validation_data=(X_val, y_val),
-        verbose=1,
-        callbacks=[early_stopping],
-        class_weight=class_weights_dict,
+        verbose=1
     )
 
-    # Evaluate model
-    scores = model.evaluate(X_val_scaled, y_val, verbose=0)
-    print("Validation Loss: %.4f" % scores[0])
-    print("Validation Accuracy: %.4f" % scores[1])
+    # 6) Evaluate   
+    val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+    print(f"Validation Loss: {val_loss:.4f}")
+    print(f"Validation Accuracy: {val_acc:.4f}")
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()
+#     Validation Loss: 1.3736
+# Validation Accuracy: 0.4074
+    

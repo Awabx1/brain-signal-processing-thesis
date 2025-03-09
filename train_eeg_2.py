@@ -7,13 +7,20 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import (
-    Input, Dense, Conv2D, Activation, AveragePooling2D,
-    SeparableConv2D, DepthwiseConv2D, Dropout, Flatten, BatchNormalization
+from tensorflow.python.keras.models import Model
+from tensorflow.python.keras.layers import (
+    Input,
+    Dense,
+    Conv2D,
+    Activation,
+    AveragePooling2D,
+    SeparableConv2D,
+    DepthwiseConv2D,
+    Dropout,
+    Flatten
 )
-from tensorflow.keras.optimizers import Adam
-
+from tensorflow.python.layers.normalization import BatchNormalization
+from tensorflow.python.keras.optimizer_v2.adam import Adam
 
 
 # ---------------------------------------------------------
@@ -182,7 +189,7 @@ def main():
         verbose=1
     )
 
-    # 6) Evaluate   
+    # 6) Evaluate
     val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
     print(f"Validation Loss: {val_loss:.4f}")
     print(f"Validation Accuracy: {val_acc:.4f}")
@@ -192,4 +199,3 @@ if __name__ == '__main__':
     main()
 #     Validation Loss: 1.3736
 # Validation Accuracy: 0.4074
-    
