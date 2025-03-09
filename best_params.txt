@@ -1,0 +1,15 @@
+cnn
+Best Parameter Combination:
+{'conv1_filters': 8, 'conv2_filters': 16, 'dropout1': 0.25, 'dropout2': 0.25, 'dense_units': 32, 'learning_rate': 0.001}
+Best Test Accuracy: 0.2593
+
+knn
+Best KNN Params: {'n_neighbors': 3, 'weights': 'distance', 'p': 1}, Best Accuracy: 0.2928
+
+
+rf
+Best RandomForest Params: {'n_estimators': 200, 'max_depth': None, 'min_samples_split': 2, 'max_features': 'log2'}, Best Accuracy: 0.2960
+
+lstm
+Best LSTM Params: {'lstm_units': 64, 'dropout': 0.3, 'dense_units': 64, 'learning_rate': 0.0001}
+Best Test Accuracy: 0.2963
